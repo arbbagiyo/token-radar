@@ -1,47 +1,42 @@
-// Token Radar's model, radar-3: the snapshot in, a ranked board out.
+// Token Radar, radar-4: the snapshot in, a ranked board out.
 //
-// The board ranks every pre-token protocol the snapshot can honestly score: all 40 watchlist slugs
-// plus every other pre-token protocol below the floor that is not a wrapped, staked or bridged
-// product of a token that already trades, not an exchange, and not a versioned pool. Protocols whose
-// token already trades are kept apart in the Live view, shown with their market cap, never mixed into
-// the ranking.
+// The board ranks every pre-token protocol the snapshot can honestly score: all 40
+// watchlist slugs plus every other rankable pre-token protocol. Protocols whose token
+// already trades are kept apart in the Live view, shown with their market cap, never
+// mixed into the ranking.
 //
-// radar-3 fixes radar-2's weakest link: its category multiple. radar-2 took the median
-// market-cap-to-TVL ratio of a category's live protocols and shrunk it toward the global median.
-// That overstates big protocols twice over. First, the ratio itself falls hard with size: among the
-// snapshot's 128 live protocols the median ratio is 0.42 below $50M of TVL, 0.17 at $50-200M, 0.06
-// at $200M-1B and 0.03 above $1B, so a $2.7B protocol scored at a small-cap multiple is worth
-// several times its plausible value. Second, thin categories decide the multiple on one member:
-// Risk Curators had a single live member, so radar-2 scored every curator at that one protocol's
-// ratio. radar-3 calibrates both effects from the live set itself, every run:
+// The value model is calibrated from the live set itself, every run, from the
+// snapshot's own figures only:
 //
-//   sizeBase = 10 ^ (a + b * log10(tvl_usd)), the least-squares line through the live protocols'
-//              log10(market-cap/TVL) on log10(TVL), after winsorising each live ratio to
-//              [0.005, 5] so one 400x outlier cannot tilt the line. On this snapshot the fit is
-//              about log10 ratio = 2.52 - 0.42 * log10 TVL: a $10M protocol's base is ~0.41, a $1B
-//              protocol's is ~0.06, a $3B protocol's ~0.04.
-//   catFactor = the category's median residual from that line, shrunk toward 1 with a prior
-//              weight of 6 (a one-member category keeps only a seventh of its residual) and
-//              clamped to [0.25, 2.5]. A category with no live member gets factor 1.
+//   sizeBase = 10 ^ (a + b * log10(tvl_usd)), the least-squares line through the live
+//              protocols' log10(market-cap/TVL) on log10(TVL), each live ratio
+//              winsorised to [0.005, 5]. On this snapshot the fit is about
+//              log10 ratio = 2.52 - 0.42 * log10 TVL: a $10M protocol's base is ~0.41,
+//              a $1B protocol's ~0.06, a $3B protocol's ~0.04. Big protocols are not
+//              scored at small-cap multiples.
+//   catFactor = the category's median residual from that line, shrunk toward 1 with a
+//              prior weight of 6 and clamped to [0.25, 2.5]. A category with no live
+//              member gets factor 1.
 //   comp     = clamp(sizeBase * catFactor, [0.01, 1.2]).
-//   growth   = 1 + 0.30 * tanh(clamp(change_7d, -90, 900) / 100), bounded to [0.70, 1.30]; a
-//              protocol whose 7-day change is unreported gets that factor times 0.97, because an
-//              unreported number is not a flat week, it is missing data.
-//   maturity = 0.65 + 0.35 * min(age_days, 1095) / 1095, times 0.90 when the protocol was first
-//              listed under 90 days ago: a young listing with a huge TVL is usually a relisting
-//              or a vault migration, not a durable record. An unlisted age scores 365 days.
-//   breadth  = 1 + 0.02 * min(chains - 1, 4), at most 1.08: a protocol live on several chains has
-//              more places its token could matter than a single-chain one.
-//   implied  = round(tvl_usd * comp * growth * maturity * breadth), at least $1.
+//   growth   = 1 + 0.30 * tanh(clamp(change_7d, -90, 900) / 100); an unreported 7-day
+//              change gets that factor times 0.97, because an unreported number is
+//              missing data, not a flat week.
+//   maturity = 0.65 + 0.35 * min(age_days, 1095) / 1095, times 0.90 when first listed
+//              under 90 days ago. An unknown listed date scores 365 days.
+//   breadth  = 1 + 0.02 * min(chains - 1, 4), at most 1.08.
+//   level    = 10 ^ (-median signed log10(implied/mcap) over the live set, scored
+//              without the level factor). It centres the backtest's median bias at
+//              zero; it is computed from the live set on every run, never hardcoded.
+//   implied  = round(tvl_usd * comp * growth * maturity * breadth * level), at least $1.
 //
-// Backtest, run by the model itself and shown on the dashboard: scoring the 128 live protocols
-// with this same function and comparing with their actual market caps, the median implied value
-// is within 3.2x of the real one and 63 of 128 land within 3x. radar-2's comp alone managed
-// 3.9x and 53 of 128. The check is in-sample (the live set calibrates the multiples), and the
-// dashboard says so; it is a sanity check on calibration, not a prediction.
+// Backtest, run by the model itself and shown on the dashboard: scoring the 128 live
+// protocols with this same function (level included) and comparing with their actual
+// market caps. It is in-sample by construction — the live set calibrates the
+// multiples — so the dashboard says so; it is a calibration check, not a prediction.
 //
-// No protocol name is ever special-cased. The dashboard states the formula and recomputes every
-// row's factors from the snapshot figures, so the page and board.json visibly agree.
+// No protocol name is ever special-cased. The dashboard states the formula and
+// recomputes every row's factors from the snapshot figures, so the page and
+// board.json visibly agree.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -112,7 +107,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /** How many live-token protocols the Live view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -142,6 +137,7 @@ export interface BoardRow {
     growth_multiplier: number;
     maturity_multiplier: number;
     breadth_multiplier: number;
+    level_factor: number;
     age_days: number | null;
     young: boolean;
     growth_reported: boolean;
@@ -169,6 +165,7 @@ export interface RadarRow {
   growth_multiplier: number;
   maturity_multiplier: number;
   breadth_multiplier: number;
+  level_factor: number;
   young: boolean;
   growth_reported: boolean;
   farm_steps: string[];
@@ -198,6 +195,8 @@ export interface Backtest {
   median_factor_error: number;
   within_3x: number;
   within_10x: number;
+  /** Median signed log10(implied/mcap) before the level correction (negative = under-predicts). */
+  median_signed_log_error: number;
 }
 
 /** Everything the dashboard needs: the board, the live set, the comps and the model. */
@@ -214,6 +213,7 @@ export interface RadarData {
   global_comp: number;
   size_fit: SizeFit;
   backtest: Backtest;
+  level_factor: number;
   watchlist: string[];
   comps: { category: string; members: number; factor: number; median_residual: number }[];
   rows: RadarRow[];
@@ -229,12 +229,6 @@ export class SnapshotError extends Error {
 }
 
 const DAY_MS = 86_400_000;
-
-/** A finite number, else `fallback`. */
-function finite(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-}
-
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 
 /** A whole day count from `from` to `to`, clamped at zero; null when either date is absent or bad. */
@@ -292,10 +286,9 @@ function liveRatio(p: SnapshotProtocol, model: ModelConstants): number | null {
 }
 
 /**
- * The size curve: least squares through the live protocols' log10 ratio on log10 TVL. The
- * slope is negative on any snapshot where big protocols trade at lower multiples than small
- * ones, which is what the market does; a slope at or above zero would mean the size effect is
- * absent, and the caller refuses the board rather than scoring on a broken fit.
+ * The size curve: least squares through the live protocols' log10 ratio on log10 TVL.
+ * A slope at or above zero would mean the size effect is absent, and the caller
+ * refuses the board rather than scoring on a broken fit.
  */
 export function fitSizeCurve(protocols: SnapshotProtocol[], model: ModelConstants = MODEL): SizeFit {
   const pts: { x: number; y: number }[] = [];
@@ -325,9 +318,10 @@ export function sizeBaseFor(tvlUsd: number, fit: SizeFit): number {
 }
 
 /**
- * The category factors: each category's median residual from the size curve, shrunk toward 1
- * with the prior weight, then clamped. A one-member category keeps only 1/(1+prior) of its
- * residual, so a single odd live protocol cannot set its whole category's multiple.
+ * The category factors: each category's median residual from the size curve, shrunk
+ * toward 1 with the prior weight, then clamped. A one-member category keeps only
+ * 1/(1+prior) of its residual, so a single odd live protocol cannot set its whole
+ * category's multiple.
  */
 export function categoryFactors(
   protocols: SnapshotProtocol[],
@@ -379,8 +373,8 @@ export function compFor(
 }
 
 /**
- * The growth factor: tanh keeps a weekly spike bounded instead of letting it multiply the
- * value. An unreported 7-day change is discounted, not treated as a flat week.
+ * The growth factor: tanh keeps a weekly spike bounded instead of letting it multiply
+ * the value. An unreported 7-day change is discounted, not treated as a flat week.
  */
 export function growthFactor(
   change7d: number | null,
@@ -412,14 +406,7 @@ export function breadthFactor(chains: string[], model: ModelConstants = MODEL): 
   return round4(1 + model.breadth_step * extra);
 }
 
-/** The factors and the implied value one protocol gets under `model`. */
-export function impliedValue(
-  protocol: SnapshotProtocol,
-  asOf: string,
-  fit: SizeFit,
-  factors: Map<string, { factor: number; members: number; median_residual: number }>,
-  model: ModelConstants = MODEL,
-): {
+export interface ScoredProtocol {
   implied: number;
   comp: number;
   sizeBase: number;
@@ -432,30 +419,59 @@ export function impliedValue(
   breadthMult: number;
   age: number | null;
   young: boolean;
-} {
+}
+
+/** The factors and the implied value one protocol gets, at a given level factor. */
+export function impliedValue(
+  protocol: SnapshotProtocol,
+  asOf: string,
+  fit: SizeFit,
+  factors: Map<string, { factor: number; members: number; median_residual: number }>,
+  levelFactor: number,
+  model: ModelConstants = MODEL,
+): ScoredProtocol {
   const age = ageDays(asOf, protocol.listed_at);
   const { ratio: comp, sizeBase, catFactor, members: compMembers } = compFor(protocol, fit, factors, model);
   const { pct: growthPct, mult: growthMult, reported: growthReported } = growthFactor(protocol.change_7d, model);
   const { mult: maturityMult, young } = maturityFactor(age, model);
   const breadthMult = breadthFactor(protocol.chains, model);
-  const implied = Math.max(1, Math.round(protocol.tvl_usd * comp * growthMult * maturityMult * breadthMult));
+  const implied = Math.max(1, Math.round(protocol.tvl_usd * comp * growthMult * maturityMult * breadthMult * levelFactor));
   return { implied, comp, sizeBase, catFactor, compMembers, growthPct, growthMult, growthReported, maturityMult, breadthMult, age, young };
 }
 
-/** The snapshot's protocol by slug. */
-function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
-  return new Map(protocols.map((p) => [p.slug, p]));
+/**
+ * The level correction: score every live protocol without it, take the median signed
+ * log10(implied/mcap), and return 10^(-that median) so the corrected backtest's
+ * median bias is centred at zero. Computed from the live set on every run.
+ */
+export function levelFactorFor(
+  snapshot: Snapshot,
+  fit: SizeFit,
+  factors: Map<string, { factor: number; members: number; median_residual: number }>,
+  model: ModelConstants = MODEL,
+): { level: number; median_signed_log_error: number; members: number } {
+  const live = snapshot.protocols.filter((p) => p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0);
+  const signed: number[] = [];
+  for (const p of live) {
+    const v = impliedValue(p, snapshot.as_of, fit, factors, 1, model);
+    signed.push(Math.log10(v.implied / p.mcap_usd!));
+  }
+  const med = median([...signed].sort((a, b) => a - b)) ?? 0;
+  return { level: round4(Math.pow(10, -med)), median_signed_log_error: round4(med), members: live.length };
 }
 
 /**
- * The backtest: every live protocol scored with the same function as if it had no token,
- * against its real market cap. In-sample by construction — the live set calibrates the
- * multiples — so it is reported as a calibration check, never as out-of-sample proof.
+ * The backtest: every live protocol scored with the same function (level included)
+ * as if it had no token, against its real market cap. In-sample by construction —
+ * the live set calibrates the multiples — so it is reported as a calibration check,
+ * never as out-of-sample proof.
  */
 export function backtest(
   snapshot: Snapshot,
   fit: SizeFit,
   factors: Map<string, { factor: number; members: number; median_residual: number }>,
+  levelFactor: number,
+  medianSignedLogError: number,
   model: ModelConstants = MODEL,
 ): Backtest {
   const live = snapshot.protocols.filter((p) => p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0);
@@ -463,7 +479,7 @@ export function backtest(
   let within10 = 0;
   const errors: number[] = [];
   for (const p of live) {
-    const v = impliedValue(p, snapshot.as_of, fit, factors, model);
+    const v = impliedValue(p, snapshot.as_of, fit, factors, levelFactor, model);
     const ratio = v.implied / p.mcap_usd!;
     errors.push(Math.abs(Math.log10(ratio)));
     if (ratio > 1 / 3 && ratio < 3) within3++;
@@ -475,15 +491,18 @@ export function backtest(
     median_factor_error: round4(Math.pow(10, med)),
     within_3x: within3,
     within_10x: within10,
+    median_signed_log_error: medianSignedLogError,
   };
 }
 
 /** The protocols the board ranks, strongest first, with ranks 1..n. */
-export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): BoardRow[] {
+export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; fit: SizeFit; level: number; backtest: Backtest; factors: Map<string, { factor: number; members: number; median_residual: number }> } {
   const fit = fitSizeCurve(snapshot.protocols, model);
   if (fit.slope >= 0) throw new SnapshotError('size curve slope is not negative: the live set shows no size effect to calibrate from');
   const factors = categoryFactors(snapshot.protocols, fit, model);
-  const index = bySlug(snapshot.protocols);
+  const { level, median_signed_log_error } = levelFactorFor(snapshot, fit, factors, model);
+  const back = backtest(snapshot, fit, factors, level, median_signed_log_error, model);
+  const index = new Map(snapshot.protocols.map((p) => [p.slug, p]));
   const chosen = new Map<string, SnapshotProtocol>();
   // The watchlist is the floor: every slug it names, even one the snapshot no longer carries.
   for (const slug of snapshot.watchlist) {
@@ -496,11 +515,11 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
   }
 
   const scored = [...chosen.values()].map((p) => {
-    const v = impliedValue(p, snapshot.as_of, fit, factors, model);
+    const v = impliedValue(p, snapshot.as_of, fit, factors, level, model);
     return { p, ...v };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
-  return scored.map((s, i) => ({
+  const board: BoardRow[] = scored.map((s, i) => ({
     rank: i + 1,
     slug: s.p.slug,
     name: s.p.name,
@@ -524,12 +543,14 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       growth_multiplier: s.growthMult,
       maturity_multiplier: s.maturityMult,
       breadth_multiplier: s.breadthMult,
+      level_factor: level,
       age_days: s.age,
       young: s.young,
       growth_reported: s.growthReported,
     },
     farm_steps: farmSteps(s.p, s.age),
   }));
+  return { board, fit, level, backtest: back, factors };
 }
 
 /** The first chain a protocol names, or a neutral phrase. */
@@ -590,9 +611,10 @@ function weeklyActionFor(p: SnapshotProtocol, capital: number, chain: string): s
 }
 
 /**
- * A protocol's farm plan: seven steps, each an action with a cost and a time, derived from the
- * protocol's own record (category, chains, TVL, age), never from a hand-written list of names.
- * The seventh step is the exit: a farm with no unwind plan is a position you cannot leave.
+ * A protocol's farm plan: seven steps, each an action with a cost and a time, derived
+ * from the protocol's own record (category, chains, TVL, age), never from a hand-written
+ * list of names. The seventh step is the exit: a farm with no unwind plan is a position
+ * you cannot leave.
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null): string[] {
   const chain = chainOf(p);
@@ -688,6 +710,7 @@ export function radarRow(row: BoardRow): RadarRow {
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
     breadth_multiplier: row.model.breadth_multiplier,
+    level_factor: row.model.level_factor,
     young: row.model.young,
     growth_reported: row.model.growth_reported,
     farm_steps: row.farm_steps,
@@ -696,10 +719,8 @@ export function radarRow(row: BoardRow): RadarRow {
 
 /** Everything the dashboard renders, from the snapshot. */
 export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
-  const board = buildBoard(snapshot, model);
+  const { board, fit, level, backtest: back, factors } = buildBoard(snapshot, model);
   const live = liveRows(snapshot);
-  const fit = fitSizeCurve(snapshot.protocols, model);
-  const factors = categoryFactors(snapshot.protocols, fit, model);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
   const radar: RadarData = {
     as_of: snapshot.as_of,
@@ -713,7 +734,8 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     live_size: live.length,
     global_comp: globalComp(snapshot.protocols, model),
     size_fit: fit,
-    backtest: backtest(snapshot, fit, factors, model),
+    backtest: back,
+    level_factor: level,
     watchlist: snapshot.watchlist,
     comps: [...factors.entries()]
       .map(([category, v]) => ({ category, members: v.members, factor: v.factor, median_residual: v.median_residual }))

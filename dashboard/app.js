@@ -1,8 +1,10 @@
-// Token Radar, radar-3: the dashboard. It reads window.RADAR (written beside dashboard/ by
-// main.ts) and renders the ranked board, the spotlight five, the filters, the live-token set and
-// one detail drawer per protocol. No network: every byte it shows is in data.js. The farm plan
-// is rendered exactly as board.json carries it; the model panel recomputes each row's implied
-// value from the stored factors and says so when the numbers agree.
+// Token Radar, radar-4: the dashboard. It reads window.RADAR (written beside
+// dashboard/ by main.ts) and renders the ranked board first, then the top five and
+// the model detail below it, plus the filters, the live-token set and one detail
+// drawer per protocol. No network: every byte it shows is in data.js. The farm plan
+// is rendered exactly as board.json carries it; the detail view recomputes each
+// row's implied value from the stored factors (level included) and says so when the
+// numbers agree.
 (function () {
   'use strict';
 
@@ -30,12 +32,11 @@
   }
   function fmtMult(n) { return 'x' + n.toFixed(2); }
 
-  // The model in one function, the same arithmetic main.ts runs: TVL x comp x growth x maturity
-  // x breadth, where comp itself is the size curve's base for this TVL times the category's
-  // shrunk factor. The detail view recomputes the row from the stored factors and compares it
-  // with the board's number, so a stale data.js would show up at once.
+  // The model in one function, the same arithmetic main.ts runs: TVL x comp x growth
+  // x maturity x breadth x level, where comp is the size curve's base for this TVL
+  // times the category's shrunk factor, and level centres the backtest's median bias.
   function impliedOf(row) {
-    return Math.max(1, Math.round(row.tvl_usd * row.comp_ratio * row.growth_multiplier * row.maturity_multiplier * row.breadth_multiplier));
+    return Math.max(1, Math.round(row.tvl_usd * row.comp_ratio * row.growth_multiplier * row.maturity_multiplier * row.breadth_multiplier * (row.level_factor || DATA.level_factor || 1)));
   }
 
   function el(tag, attrs) {
@@ -106,6 +107,7 @@
       else if (key === 'growth') { av = a.change_7d === null ? -Infinity : a.change_7d; bv = b.change_7d === null ? -Infinity : b.change_7d; }
       else if (key === 'age') { av = a.age_days === null ? Infinity : a.age_days; bv = b.age_days === null ? Infinity : b.age_days; }
       else if (key === 'comp') { av = a.comp_ratio; bv = b.comp_ratio; }
+      else if (key === 'rank') { av = a.rank; bv = b.rank; }
       else { av = a.implied_value_usd; bv = b.implied_value_usd; }
       if (av < bv) return -state.dir;
       if (av > bv) return state.dir;
@@ -120,7 +122,7 @@
         el('span', { class: 'brand-name' }, el('b', { text: 'Token Radar' }), 'Pre-token launches, ranked')
       ),
       el('div', { class: 'top-meta' },
-        el('span', { class: 'live-dot', text: '● live snapshot ' + DATA.as_of }),
+        el('span', null, el('span', { class: 'dot', text: '● ' }), 'live snapshot ' + DATA.as_of),
         el('span', { text: 'DefiLlama protocol index' }),
         el('span', { text: DATA.model_version + ' model' })
       )
@@ -135,35 +137,37 @@
         el('p', null,
           'The watchlist is the floor: every protocol with at least ',
           el('b', { text: '$' + Math.round(DATA.floor_usd / 1e6) + 'M of TVL' }),
-          ' and no token on record. The early radar adds ',
-          el('b', { text: String(DATA.early_size) + ' pre-token protocols' }),
-          ' below that floor, and the live-token set is kept apart with its market caps. ',
-          'Implied value is a model, not a promise — and never a prediction of whether a token launches.'
+          ' and no token on record, plus ',
+          el('b', { text: String(DATA.early_size) + ' early pre-token protocols' }),
+          ' below that floor. Live-token protocols are kept apart, with their market caps. Implied value is a model, not a promise — never a prediction of whether a token launches.'
         )
       ),
       el('div', { class: 'stats' },
         el('div', { class: 'stat' }, el('b', { text: DATA.watchlist_size + ' / ' + DATA.watchlist_size }), el('span', { text: 'Watchlist covered' })),
-        el('div', { class: 'stat' }, el('b', { text: String(DATA.board_size) }), el('span', { text: 'Pre-token rows scored' })),
+        el('div', { class: 'stat' }, el('b', { text: String(DATA.board_size) }), el('span', { text: 'Pre-token rows' })),
         el('div', { class: 'stat' }, el('b', { text: top ? fmtUsd(top.implied_value_usd) : 'n/a' }), el('span', { text: 'Top implied value' })),
         el('div', { class: 'stat' }, el('b', { text: fmtMult(DATA.global_comp) }), el('span', { text: 'Median mcap / TVL, live' }))
       )
     );
   }
 
-  // The five strongest rows, with one line each saying why they lead: the board's answer first.
-  function spotlight() {
-    var top5 = DATA.rows.slice(0, 5);
-    return el('section', { class: 'spot' },
-      el('h2', { text: 'Farm these five first' }),
-      el('div', { class: 'spot-grid' }, top5.map(function (r) {
-        var why = (r.category || 'Other') + ' · ' + fmtUsd(r.tvl_usd) + ' TVL · ' + fmtPct(r.change_7d) + ' in 7d';
-        return el('button', { type: 'button', class: 'spot-card', onclick: function () { openDetail(r.slug); } },
-          el('span', { class: 'rank', text: 'Rank ' + r.rank }),
-          el('b', { text: r.name }),
-          el('span', { class: 'val', text: fmtUsd(r.implied_value_usd) }),
-          el('span', { class: 'why', text: why })
-        );
-      }))
+  // The whole model in two lines: formula plus the in-sample backtest. It sits above
+  // the table but stays small, so the board still starts near the top of the page.
+  function modelStrip() {
+    var m = DATA.model;
+    var f = DATA.size_fit;
+    var b = DATA.backtest;
+    return el('section', { class: 'model-strip' },
+      el('div', { class: 'formula' },
+        el('b', { text: 'implied = TVL x comp x growth x maturity x breadth x level   ' }),
+        'comp = 10^(' + f.intercept + ' + ' + f.slope + ' x log10 TVL) x catFactor, growth = 1 + ' + m.growth_weight + ' x tanh(7d / 100), maturity to ' + (m.maturity_floor + m.maturity_range).toFixed(2) + ', level x' + DATA.level_factor.toFixed(2) + ' from the live set.'
+      ),
+      el('div', { class: 'check' },
+        el('b', { text: 'Backtest (in-sample): ' }),
+        'the ' + b.members + ' live protocols score a median ',
+        el('b', { text: fmtMult(b.median_factor_error) }),
+        ' from their real market caps — ' + b.within_3x + ' inside 3x, ' + b.within_10x + ' inside 10x. Live-token rows are shown separately, never ranked.'
+      )
     );
   }
 
@@ -199,7 +203,7 @@
       el('div', { class: 'field' }, el('label', { for: 'chain', text: 'Chain' }), chainSelect),
       el('div', { class: 'field' }, el('label', { for: 'minTvl', text: 'Minimum TVL' }), tvlSelect),
       el('label', { class: 'check', for: 'watch' }, watchBox, 'Watchlist only'),
-      el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live)),
+      el('div', { class: 'field' }, el('span', { class: 'lbl', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live)),
       el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' of ' + DATA.board_size + ' rows' : DATA.live.length + ' live-token protocols' })
     );
   }
@@ -255,7 +259,7 @@
       el('div', { class: 'table-wrap' },
         el('table', null,
           el('thead', null, el('tr', null,
-            sortHeader('implied', 'Rank'),
+            sortHeader('rank', 'Rank'),
             sortHeader('name', 'Protocol'),
             sortHeader('tvl', 'TVL'),
             sortHeader('growth', '7d'),
@@ -293,6 +297,24 @@
     );
   }
 
+  // The five strongest rows, below the table — never above it, so the board is the
+  // first thing a reader sees.
+  function topFive() {
+    var top5 = DATA.rows.slice(0, 5);
+    return el('section', { class: 'top5' },
+      el('h2', { text: 'Farm these five first' }),
+      el('div', { class: 'top5-grid' }, top5.map(function (r) {
+        var why = (r.category || 'Other') + ' · ' + fmtUsd(r.tvl_usd) + ' TVL · ' + fmtPct(r.change_7d) + ' in 7d';
+        return el('button', { type: 'button', class: 'top5-card', onclick: function () { openDetail(r.slug); } },
+          el('span', { class: 'rank', text: 'Rank ' + r.rank }),
+          el('b', { text: r.name }),
+          el('span', { class: 'val', text: fmtUsd(r.implied_value_usd) }),
+          el('span', { class: 'why', text: why })
+        );
+      }))
+    );
+  }
+
   function modelPanel() {
     var m = DATA.model;
     var f = DATA.size_fit;
@@ -302,14 +324,15 @@
     return el('section', { class: 'panel model' },
       el('h2', { text: 'How implied value is computed' }),
       el('p', { class: 'note', text: 'One function scores every row, from the snapshot figures alone. No protocol name is special-cased and no row is hand-picked.' }),
-      el('div', { class: 'formula' },
-        'implied = round( tvl_usd x comp x growth x maturity x breadth ), where comp = sizeBase(tvl_usd) x catFactor(category), ' +
+      el('p', { class: 'note' },
+        'implied = round(tvl_usd x comp x growth x maturity x breadth x level), where comp = sizeBase(tvl_usd) x catFactor(category), ' +
         'sizeBase = 10 ^ (' + f.intercept + ' + ' + f.slope + ' x log10(tvl_usd)), growth = 1 + ' + m.growth_weight + ' x tanh(clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100), ' +
         'maturity = ' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ' (x ' + m.young_discount + ' under ' + m.young_age_days + ' days), ' +
-        'breadth = 1 + ' + m.breadth_step + ' per extra chain, at most ' + (1 + m.breadth_step * m.breadth_max_extra_chains).toFixed(2)
+        'breadth = 1 + ' + m.breadth_step + ' per extra chain, at most ' + (1 + m.breadth_step * m.breadth_max_extra_chains).toFixed(2) + ', ' +
+        'level = x' + DATA.level_factor.toFixed(2) + ', computed from the live set on this run as 10^(-median signed log10(implied/mcap)) before the correction, so the backtest median bias is centred at zero.'
       ),
-      el('p', { class: 'check-line' },
-        el('b', { text: 'Model check: ' }),
+      el('p', { class: 'note' },
+        el('b', { text: 'Model check (in-sample): ' }),
         'scored as if they had no token, the ' + b.members + ' live protocols the multiples were calibrated from come out a median ',
         el('b', { text: fmtMult(b.median_factor_error) }),
         ' from their real market caps, with ' + b.within_3x + ' of ' + b.members + ' inside 3x and ' + b.within_10x + ' inside 10x. ',
@@ -348,8 +371,9 @@
   var dialog = el('dialog', { class: 'detail', id: 'detail', 'aria-labelledby': 'detail-title' });
   dialog.addEventListener('close', function () { state.selected = null; writeHash(); });
 
-  // Why this row ranks where it does, in the reader's words: the size base, the category
-  // factor, the growth, the maturity and the breadth, plus every data-quality discount applied.
+  // Why this row ranks where it does, in the reader's words: the size base, the
+  // category factor, the growth, the maturity, the breadth and the level correction,
+  // plus every data-quality discount applied.
   function whyBullets(row) {
     var out = [];
     out.push('Size base ' + fmtMult(row.size_base) + ' for ' + fmtUsd(row.tvl_usd) + ' of TVL: the curve, not a flat median, sets the base for a protocol this big.');
@@ -357,6 +381,7 @@
     out.push('Growth ' + fmtMult(row.growth_multiplier) + ' on ' + (row.growth_reported ? fmtPct(row.change_7d) + ' over 7 days' : 'an unreported 7-day change, discounted for missing data') + '.');
     out.push('Maturity ' + fmtMult(row.maturity_multiplier) + ' for ' + fmtAge(row.age_days) + ' listed with no token' + (row.young ? ', including the young-listing haircut' : '') + '.');
     out.push('Breadth ' + fmtMult(row.breadth_multiplier) + ' for running on ' + (row.chains || []).length + ' chain' + ((row.chains || []).length === 1 ? '' : 's') + '.');
+    out.push('Level ' + fmtMult(row.level_factor || DATA.level_factor) + ', the correction that centres the live backtest at zero median bias, applied to every row alike.');
     return out;
   }
 
@@ -393,6 +418,7 @@
         el('div', null, el('span', { text: 'Age with no token' }), el('b', { class: 'num', text: fmtAge(row.age_days) })),
         el('div', null, el('span', { text: 'Maturity factor' }), el('b', { class: 'num', text: fmtMult(row.maturity_multiplier) })),
         el('div', null, el('span', { text: 'Breadth factor' }), el('b', { class: 'num', text: fmtMult(row.breadth_multiplier) })),
+        el('div', null, el('span', { text: 'Level factor' }), el('b', { class: 'num', text: fmtMult(row.level_factor || DATA.level_factor) })),
         el('div', { class: 'total' }, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) }))
       ),
       el('p', { class: 'sub', text: 'Model ' + DATA.model_version + ': the page recomputes this row as ' + fmtUsd(recomputed) + (agrees ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.') + ' This is an estimate, not a price.' })
@@ -422,10 +448,13 @@
     var shell = el('div', { class: 'shell' });
     shell.appendChild(header());
     shell.appendChild(lede());
-    if (state.tab === 'pre-token') shell.appendChild(spotlight());
+    if (state.tab === 'pre-token') shell.appendChild(modelStrip());
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
-    if (state.tab === 'pre-token') shell.appendChild(modelPanel());
+    if (state.tab === 'pre-token') {
+      shell.appendChild(topFive());
+      shell.appendChild(modelPanel());
+    }
     shell.appendChild(foot());
     app.appendChild(shell);
     app.setAttribute('aria-busy', 'false');
