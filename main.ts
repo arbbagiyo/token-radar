@@ -1,11 +1,13 @@
-// Token Radar, radar-2: the sealed snapshot in, a ranked board and a dashboard out.
+// Token Radar, radar-3: the sealed snapshot in, a ranked board and a dashboard out.
 //
 // Node 22, standard library only, no network. It reads /input/snapshot.json (or --input
 // <snapshot.json|directory>), scores every rankable pre-token protocol with the model in
-// lib/model.ts, writes the ranked board to /output/board.json and the dashboard's data to
-// /output/data.js, copies dashboard/ and screenshots/ to /output, and writes /output/dossier.json
-// with the vendored make.fun library. Two runs write the same bytes: the model is a pure function
-// of the snapshot, and every sort has a slug tie-break.
+// lib/model.ts — a size curve fit on the live set, not a flat category median — writes the
+// ranked board to /output/board.json and the dashboard's data to /output/data.js, copies
+// dashboard/ and screenshots/ to /output, and writes /output/dossier.json with the vendored
+// make.fun library. Two runs write the same bytes: the model is a pure function of the snapshot,
+// and every sort has a slug tie-break. The run also prints the model's own backtest on the live
+// protocols, so a bad calibration is visible in the log instead of hiding in the board.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
@@ -102,8 +104,12 @@ writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEX
 
 const top = board[0]!;
 const bottom = board[board.length - 1]!;
+const fit = radar.size_fit;
+const back = radar.backtest;
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
+    `token radar: size curve log10 ratio = ${fit.intercept} + ${fit.slope} x log10 TVL, fit on ${fit.members} live protocols\n` +
+    `token radar: backtest on ${back.members} live protocols: median implied value within ${back.median_factor_error}x of the real market cap, ${back.within_3x} within 3x, ${back.within_10x} within 10x\n` +
     `token radar: rank 1 ${top.slug} at $${top.implied_value_usd.toLocaleString('en-US')}, rank ${board.length} ${bottom.slug} at $${bottom.implied_value_usd.toLocaleString('en-US')}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
