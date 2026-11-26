@@ -1,16 +1,17 @@
-// Token Radar, radar-5: the sealed snapshot in, a ranked board and a dashboard out.
+// Token Radar, radar-6: the sealed snapshot in, a ranked board and a dashboard out.
 //
 // Node 22, standard library only, no network. It reads /input/snapshot.json (or --input
 // <snapshot.json|directory>), scores every rankable pre-token protocol with the model in
-// lib/model.ts — a size curve fit on the live set, every extra term tested held-out twice
-// (leave-one-out and walk-forward) and kept only when both tests improve, token odds from
-// a logistic model on the dated peers, ranges from the held-out residuals, and a costed
-// farm verdict on every row — writes the ranked board to /output/board.json and the
-// dashboard's data to /output/data.js, copies dashboard/ and screenshots/ to /output, and
-// writes /output/dossier.json with the vendored make.fun library. Two runs write the same
-// bytes: the model is a pure function of the snapshot, every sort has a slug tie-break,
-// and the bootstrap uses a fixed seed. The run prints the model's own held-out evidence,
-// so a bad calibration is visible in the log instead of hiding in the board.
+// lib/model.ts — a size curve fit on the stand-alone traded comps, every extra term tested
+// held-out (leave-one-out and walk-forward, five-fold reported) and kept only when both
+// selection tests improve, forward token odds from a Weibull time-to-record model on the
+// dated peers, ranges from the held-out residuals, and a costed farm verdict on every row —
+// writes the ranked board to /output/board.json and the dashboard's data to /output/data.js,
+// copies dashboard/ and screenshots/ to /output, and writes /output/dossier.json with the
+// vendored make.fun library. Two runs write the same bytes: the model is a pure function of
+// the snapshot, every sort has a slug tie-break, and the bootstrap uses a fixed seed. The run
+// prints the model's own held-out evidence, so a bad calibration is visible in the log
+// instead of hiding in the board.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
@@ -116,14 +117,14 @@ const fit = radar.size_fit;
 const value = radar.value;
 const odds = radar.odds;
 process.stdout.write(
-  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
-    `token radar: size curve log10 ratio = ${fit.intercept} + ${fit.slope} x log10 TVL, fit on ${fit.members} live protocols\n` +
-    `token radar: value terms kept: ${value.kept_terms.length === 0 ? 'none — size curve only' : value.kept_terms.join(', ')}; LOO miss x${value.base_loo_miss} (flat x${value.flat_loo_miss}), walk-forward x${value.base_walk_forward_miss} (flat x${value.flat_walk_forward_miss})\n` +
+  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.offlist_size} off-list, ${radar.comp_size} comps)\n` +
+    `token radar: size curve log10 ratio = ${fit.intercept} + ${fit.slope} x log10 TVL, fit on ${fit.members} stand-alone comps\n` +
+    `token radar: value terms kept: ${value.kept_terms.length === 0 ? 'none — size curve only' : value.kept_terms.join(', ')}; LOO miss x${value.final_loo_miss} (flat x${value.flat_loo_miss}), walk-forward x${value.final_walk_forward_miss} (flat x${value.flat_walk_forward_miss}), five-fold x${value.final_five_fold_miss}\n` +
     `token radar: level factor x${value.level_factor} (${value.level_applied ? 'applied, LOO improved' : 'not applied'}; median signed log error ${value.level_median_signed_log_error})\n` +
-    `token radar: odds terms kept: ${odds.kept_terms.join(', ') || 'none'}; Brier ten-fold ${odds.brier_ten_fold} vs base ${odds.base_brier_ten_fold}, walk-forward ${odds.brier_walk_forward} vs base ${odds.base_brier_walk_forward}\n` +
+    `token radar: odds terms kept: ${odds.kept_terms.join(', ') || 'none (age only)'}; Weibull shape ${odds.weibull_shape}, scale ${odds.weibull_scale_years}y; Brier ten-fold ${odds.brier_ten_fold} vs base ${odds.base_brier_ten_fold}, walk-forward ${odds.brier_walk_forward} vs base ${odds.base_brier_walk_forward}\n` +
     `token radar: odds peer set ${odds.peer_set}: ${odds.peer_set_note}\n` +
     `token radar: ranges P25-P75 cover ${Math.round(value.coverage_p25_p75_loo * 100)}% LOO / ${Math.round(value.coverage_p25_p75_walk_forward * 100)}% walk-forward (stated 50%); P10-P90 cover ${Math.round(value.coverage_p10_p90_loo * 100)}% / ${Math.round(value.coverage_p10_p90_walk_forward * 100)}% (stated 80%)\n` +
-    `token radar: verdicts FARM ${radar.verdict_counts.FARM}, MARGINAL ${radar.verdict_counts.MARGINAL}, SKIP ${radar.verdict_counts.SKIP}; checksum ${radar.checksum}\n` +
+    `token radar: verdicts FARM ${radar.verdict_counts.FARM}, THIN ${radar.verdict_counts.THIN}, SKIP ${radar.verdict_counts.SKIP}; checksum ${radar.checksum}\n` +
     `token radar: rank 1 ${top.slug} at $${top.implied_value_usd.toLocaleString('en-US')}, rank ${board.length} ${bottom.slug} at $${bottom.implied_value_usd.toLocaleString('en-US')}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
